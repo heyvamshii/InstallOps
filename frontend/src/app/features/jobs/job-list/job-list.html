@@ -1,0 +1,225 @@
+<header class="head">
+  <div class="head__title">
+    <p class="eyebrow">{{ isFieldTech() ? 'Assigned to you' : 'All jobs' }}</p>
+    <h1>Job queue</h1>
+  </div>
+
+  <div class="head__count">
+    <span class="tabular head__count-value">{{ total() }}</span>
+    <span class="head__count-label">{{ total() === 1 ? 'job' : 'jobs' }} matching</span>
+  </div>
+</header>
+
+<section class="filters" aria-label="Filters">
+  <div class="filters__search">
+    <label class="sr-only" for="job-search">Search jobs</label>
+    <input
+      id="job-search"
+      class="input"
+      type="search"
+      placeholder="Job number, customer, address, permit…"
+      [formControl]="searchControl"
+    />
+  </div>
+
+  <div class="chips" role="group" aria-label="Stage">
+    @for (stage of stages; track stage) {
+      <button
+        type="button"
+        class="chip stage-{{ stage }}"
+        [class.chip--on]="query().stage.includes(stage)"
+        [attr.aria-pressed]="query().stage.includes(stage)"
+        (click)="toggleStage(stage)"
+      >
+        {{ stageLabel[stage] }}
+      </button>
+    }
+  </div>
+
+  <div class="chips" role="group" aria-label="Priority and flags">
+    @for (priority of priorities; track priority) {
+      <button
+        type="button"
+        class="chip chip--plain"
+        [class.chip--on]="query().priority.includes(priority)"
+        [attr.aria-pressed]="query().priority.includes(priority)"
+        (click)="togglePriority(priority)"
+      >
+        {{ priority }}
+      </button>
+    }
+
+    <button
+      type="button"
+      class="chip chip--plain"
+      [class.chip--on]="query().overdue !== null"
+      (click)="toggleFlag('overdue')"
+    >
+      {{ query().overdue === false ? 'Not overdue' : 'Overdue' }}
+    </button>
+    <button
+      type="button"
+      class="chip chip--plain"
+      [class.chip--on]="query().on_hold !== null"
+      (click)="toggleFlag('on_hold')"
+    >
+      {{ query().on_hold === false ? 'Not held' : 'On hold' }}
+    </button>
+    <button
+      type="button"
+      class="chip chip--plain"
+      [class.chip--on]="query().has_rework !== null"
+      (click)="toggleFlag('has_rework')"
+    >
+      {{ query().has_rework === false ? 'No rework' : 'Has rework' }}
+    </button>
+  </div>
+
+  @if (!isFieldTech() && techs().length) {
+    <div class="filters__tech">
+      <label class="sr-only" for="tech-filter">Assigned tech</label>
+      <select
+        id="tech-filter"
+        class="select"
+        [value]="query().assigned_tech ?? ''"
+        (change)="patch({ assigned_tech: $any($event.target).value ? +$any($event.target).value : null, page: 1 })"
+      >
+        <option value="">Any tech</option>
+        @for (tech of techs(); track tech.id) {
+          <option [value]="tech.id">{{ tech.full_name }}</option>
+        }
+      </select>
+    </div>
+  }
+
+  @if (activeFilters() > 0) {
+    <button type="button" class="btn btn--ghost btn--sm" (click)="clearFilters()">
+      Clear {{ activeFilters() }} filter{{ activeFilters() === 1 ? '' : 's' }}
+    </button>
+  }
+</section>
+
+<div class="table" [class.table--busy]="state().status === 'loading'">
+  <div class="table__head" role="row">
+    <button type="button" class="th th--sortable" (click)="sortBy('job_number')" role="columnheader">
+      Job
+      <span class="th__dir" aria-hidden="true">{{ direction('job_number') === 'asc' ? '↑' : direction('job_number') === 'desc' ? '↓' : '' }}</span>
+    </button>
+    <span class="th" role="columnheader">Customer</span>
+    <button type="button" class="th th--sortable" (click)="sortBy('stage')" role="columnheader">
+      Stage
+      <span class="th__dir" aria-hidden="true">{{ direction('stage') === 'asc' ? '↑' : direction('stage') === 'desc' ? '↓' : '' }}</span>
+    </button>
+    <span class="th" role="columnheader">Site</span>
+    <span class="th th--num" role="columnheader">System</span>
+    <span class="th" role="columnheader">Tech</span>
+    <button
+      type="button"
+      class="th th--sortable"
+      (click)="sortBy('target_completion_date')"
+      role="columnheader"
+    >
+      Due
+      <span class="th__dir" aria-hidden="true">{{ direction('target_completion_date') === 'asc' ? '↑' : direction('target_completion_date') === 'desc' ? '↓' : '' }}</span>
+    </button>
+  </div>
+
+  @switch (state().status) {
+    @case ('error') {
+      <div class="state state--error" role="alert">
+        <p class="state__title">That didn’t load</p>
+        <p class="state__body">{{ $any(state()).message }}</p>
+      </div>
+    }
+    @default {
+      @if (rows().length === 0 && state().status === 'ok') {
+        <div class="state">
+          <p class="state__title">Nothing matches</p>
+          <p class="state__body">
+            @if (activeFilters() > 0) {
+              {{ activeFilters() }} filter{{ activeFilters() === 1 ? ' is' : 's are' }} active.
+            } @else {
+              No jobs have been created yet.
+            }
+          </p>
+          @if (activeFilters() > 0) {
+            <button type="button" class="btn btn--sm" (click)="clearFilters()">Clear filters</button>
+          }
+        </div>
+      } @else {
+        <cdk-virtual-scroll-viewport itemSize="54" class="table__body">
+          <a
+            *cdkVirtualFor="let row of rows(); trackBy: trackRow"
+            class="row"
+            [routerLink]="['/jobs', row.id]"
+            [class.row--held]="row.on_hold"
+          >
+            <span class="cell cell--id">
+              <span class="tabular">{{ row.job_number }}</span>
+              @if (row.on_hold) {
+                <span class="tag tag--hold">Hold</span>
+              }
+              @if (row.rework_count > 0) {
+                <span class="tag tag--rework" [title]="row.rework_count + ' rework cycles'">
+                  ↺{{ row.rework_count }}
+                </span>
+              }
+            </span>
+
+            <span class="cell cell--customer">{{ row.customer_name }}</span>
+
+            <span class="cell">
+              <span class="stage-chip stage-{{ row.stage }}">{{ stageLabel[row.stage] }}</span>
+            </span>
+
+            <span class="cell cell--muted">{{ row.site_city }}, {{ row.site_state }}</span>
+
+            <span class="cell cell--num tabular">
+              @if (row.system_size_kw) {
+                {{ row.system_size_kw }} kW
+              } @else {
+                —
+              }
+            </span>
+
+            <span class="cell cell--muted">{{ row.assigned_tech_name || '—' }}</span>
+
+            <span class="cell cell--due" [class.cell--overdue]="row.is_overdue">
+              @if (row.target_completion_date) {
+                <span class="tabular">{{ row.target_completion_date | date: 'd MMM yyyy' }}</span>
+              } @else {
+                —
+              }
+            </span>
+          </a>
+        </cdk-virtual-scroll-viewport>
+      }
+    }
+  }
+</div>
+
+@if (pageCount() > 1) {
+  <nav class="pager" aria-label="Pagination">
+    <button
+      type="button"
+      class="btn btn--sm"
+      [disabled]="query().page <= 1"
+      (click)="goToPage(query().page - 1)"
+    >
+      ← Previous
+    </button>
+
+    <span class="pager__label tabular">
+      Page {{ query().page }} of {{ pageCount() }}
+    </span>
+
+    <button
+      type="button"
+      class="btn btn--sm"
+      [disabled]="query().page >= pageCount()"
+      (click)="goToPage(query().page + 1)"
+    >
+      Next →
+    </button>
+  </nav>
+}

@@ -1,0 +1,251 @@
+@if (loadError()) {
+  <div class="state state--error" role="alert">
+    <p class="state__title">Can’t open this job</p>
+    <p class="state__body">{{ loadError() }}</p>
+    <a class="btn btn--sm" routerLink="/jobs">Back to the queue</a>
+  </div>
+} @else if (job(); as j) {
+  <header class="head">
+    <div class="head__left">
+      <a class="head__back" routerLink="/jobs">← Queue</a>
+      <h1 class="tabular">{{ j.job_number }}</h1>
+      <p class="head__customer">{{ j.customer.name }}</p>
+      <p class="head__site">
+        {{ j.site_address }} · {{ j.site_city }}, {{ j.site_state }} {{ j.site_postal_code }}
+      </p>
+    </div>
+
+    <div class="head__right">
+      <span class="stage-chip stage-{{ j.stage }}">{{ stageLabel[j.stage] }}</span>
+      @if (j.on_hold) {
+        <span class="head__hold">On hold — {{ j.hold_reason }}</span>
+      }
+      @if (j.rework_count > 0) {
+        <span class="head__rework">↺ {{ j.rework_count }} rework cycle{{ j.rework_count === 1 ? '' : 's' }}</span>
+      }
+    </div>
+  </header>
+
+  <ol class="pipeline" aria-label="Lifecycle progress">
+    @for (stage of stages; track stage) {
+      <li
+        class="pipeline__step stage-{{ stage }}"
+        [class.pipeline__step--reached]="isReached(stage)"
+        [class.pipeline__step--current]="stage === j.stage"
+        [attr.aria-current]="stage === j.stage ? 'step' : null"
+      >
+        <span class="pipeline__dot" aria-hidden="true"></span>
+        <span class="pipeline__label">{{ stageLabel[stage] }}</span>
+      </li>
+    }
+  </ol>
+
+  @if (banner(); as b) {
+    <div
+      class="banner"
+      [class.banner--error]="b.kind === 'error'"
+      [attr.role]="b.kind === 'error' ? 'alert' : 'status'"
+    >
+      <span>{{ b.text }}</span>
+      <button type="button" class="btn btn--ghost btn--sm" (click)="dismissBanner()">Dismiss</button>
+    </div>
+  }
+
+  <section class="actions" aria-label="Stage actions">
+    @if (j.available_transitions.length) {
+      @for (target of j.available_transitions; track target) {
+        <button
+          type="button"
+          class="btn"
+          [class.btn--primary]="stageIndexOf(target) > stageIndexOf(j.stage)"
+          [class.btn--danger]="stageIndexOf(target) < stageIndexOf(j.stage)"
+          [disabled]="pending()"
+          (click)="startTransition(target)"
+        >
+          {{ labelForTransition(target) }}
+        </button>
+      }
+    } @else {
+      <p class="actions__none">
+        @if (j.stage === 'COMPLETE') {
+          This job is closed. Complete is terminal — nothing moves out of it.
+        } @else if (j.on_hold) {
+          Held jobs can’t be moved. Release the hold first.
+        } @else {
+          {{ stageLabel[j.stage] }} is owned by another role, so you can’t advance it.
+        }
+      </p>
+    }
+
+    @if (canHold() && j.stage !== 'COMPLETE') {
+      <button type="button" class="btn btn--ghost" (click)="toggleHold()">
+        {{ j.on_hold ? 'Release hold' : 'Put on hold' }}
+      </button>
+    }
+  </section>
+
+  @if (showHoldForm()) {
+    <form class="inline-form" (ngSubmit)="toggleHold()">
+      <label class="field__label" for="hold-reason">Why is this on hold?</label>
+      <input id="hold-reason" class="input" [formControl]="holdReasonControl" />
+      <div class="inline-form__actions">
+        <button type="submit" class="btn btn--primary btn--sm" [disabled]="!holdReasonControl.value.trim()">
+          Hold job
+        </button>
+        <button type="button" class="btn btn--ghost btn--sm" (click)="showHoldForm.set(false)">
+          Cancel
+        </button>
+      </div>
+    </form>
+  }
+
+  @if (reasonFor(); as target) {
+    <form class="inline-form inline-form--danger" (ngSubmit)="confirmReason()">
+      <label class="field__label" for="reason">
+        Reason for sending this back to {{ stageLabel[target] }}
+      </label>
+      <input
+        id="reason"
+        class="input"
+        [formControl]="reasonControl"
+        placeholder="e.g. Inspection failed: rapid shutdown labeling not per NEC 690.56"
+      />
+      @if (reasonControl.touched && reasonControl.invalid) {
+        <p class="field__error">A specific reason is required — it goes on the permanent record.</p>
+      }
+      <div class="inline-form__actions">
+        <button type="submit" class="btn btn--danger btn--sm">Send back</button>
+        <button type="button" class="btn btn--ghost btn--sm" (click)="cancelReason()">Cancel</button>
+      </div>
+    </form>
+  }
+
+  <div class="columns">
+    <div class="col">
+      <section class="panel block">
+        <header class="block__head">
+          <h2>{{ stageLabel[j.stage] }} checklist</h2>
+          <span class="tabular block__meta">
+            {{ checklistProgress().done }}/{{ checklistProgress().total }}
+          </span>
+        </header>
+
+        <div
+          class="progress"
+          role="progressbar"
+          [attr.aria-valuenow]="checklistProgress().percent"
+          aria-valuemin="0"
+          aria-valuemax="100"
+        >
+          <span class="progress__fill" [style.width.%]="checklistProgress().percent"></span>
+        </div>
+
+        <ul class="checklist">
+          @for (item of currentStageItems(); track item.id) {
+            <li class="checklist__item">
+              <label>
+                <input
+                  type="checkbox"
+                  [checked]="item.is_done"
+                  (change)="toggleChecklistItem(item)"
+                />
+                <span [class.checklist__done]="item.is_done">{{ item.label }}</span>
+              </label>
+            </li>
+          } @empty {
+            <li class="checklist__empty">No checklist for this stage.</li>
+          }
+        </ul>
+      </section>
+
+      <section class="panel block">
+        <header class="block__head"><h2>Notes</h2></header>
+
+        <form class="note-form" (ngSubmit)="addNote()">
+          <textarea
+            class="textarea"
+            [formControl]="noteControl"
+            placeholder="What changed, who you spoke to, what’s blocking…"
+            rows="2"
+          ></textarea>
+          <button type="submit" class="btn btn--sm" [disabled]="!noteControl.value.trim()">
+            Add note
+          </button>
+        </form>
+
+        <ul class="notes">
+          @for (note of j.notes; track note.id) {
+            <li class="notes__item">
+              <p class="notes__body">{{ note.body }}</p>
+              <p class="notes__meta">
+                {{ note.author_name || 'Unknown' }} · {{ note.created_at | date: 'd MMM yyyy, HH:mm' }}
+              </p>
+            </li>
+          } @empty {
+            <li class="notes__empty">No notes yet.</li>
+          }
+        </ul>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="panel block">
+        <header class="block__head"><h2>System</h2></header>
+        <dl class="specs">
+          <dt>System size</dt>
+          <dd class="tabular">{{ j.system_size_kw ? j.system_size_kw + ' kW' : '—' }}</dd>
+          <dt>Modules</dt>
+          <dd class="tabular">{{ j.panel_count ?? '—' }}</dd>
+          <dt>Batteries</dt>
+          <dd class="tabular">{{ j.battery_count }}</dd>
+          <dt>Roof</dt>
+          <dd>{{ j.roof_type || '—' }}</dd>
+          <dt>Utility</dt>
+          <dd>{{ j.utility_company || '—' }}</dd>
+          <dt>AHJ</dt>
+          <dd>{{ j.ahj || '—' }}</dd>
+          <dt>Permit</dt>
+          <dd class="tabular">{{ j.permit_number || '—' }}</dd>
+          <dt>Priority</dt>
+          <dd>{{ j.priority }}</dd>
+          <dt>Target date</dt>
+          <dd class="tabular" [class.overdue]="j.is_overdue">
+            {{ j.target_completion_date ? (j.target_completion_date | date: 'd MMM yyyy') : '—' }}
+          </dd>
+        </dl>
+      </section>
+
+      <section class="panel block">
+        <header class="block__head"><h2>History</h2></header>
+        <ol class="timeline">
+          @for (entry of j.transitions.slice().reverse(); track entry.id) {
+            <li class="timeline__item" [class.timeline__item--back]="entry.reason">
+              <div class="timeline__row">
+                <span class="stage-chip stage-{{ entry.to_stage }}">
+                  {{ stageLabel[entry.to_stage] }}
+                </span>
+                <span class="timeline__from">from {{ stageLabel[entry.from_stage] }}</span>
+              </div>
+              @if (entry.reason) {
+                <p class="timeline__reason">“{{ entry.reason }}”</p>
+              }
+              <p class="timeline__meta">
+                {{ entry.actor_name || 'System' }}
+                @if (entry.was_forced) {
+                  <span class="timeline__forced">admin override</span>
+                }
+                · {{ entry.created_at | date: 'd MMM yyyy, HH:mm' }}
+              </p>
+            </li>
+          } @empty {
+            <li class="notes__empty">Created — no transitions yet.</li>
+          }
+        </ol>
+      </section>
+    </div>
+  </div>
+} @else {
+  <div class="state">
+    <p class="state__body">Loading…</p>
+  </div>
+}

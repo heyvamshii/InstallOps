@@ -1,0 +1,150 @@
+/**
+ * Design tokens.
+ *
+ * Direction: an industrial operations console — warm paper ground, ink text, hairline
+ * rules, and one signal colour per stage doing semantic work rather than decoration.
+ * Numbers are set in a monospace with tabular figures because this screen is read as a
+ * ledger, not as marketing.
+ *
+ * Both themes are defined deliberately. Colours are declared on bare `:root` first so a
+ * token always resolves, then overridden for dark.
+ */
+
+:root {
+  /* ---------------------------------------------------------------- surfaces */
+  --ground: oklch(96.5% 0.008 85);
+  --surface: oklch(99% 0.004 85);
+  --surface-raised: oklch(100% 0 0);
+  --surface-sunken: oklch(93.5% 0.01 85);
+  --surface-inverse: oklch(24% 0.015 60);
+
+  /* -------------------------------------------------------------------- ink */
+  --ink: oklch(23% 0.014 60);
+  --ink-muted: oklch(48% 0.012 60);
+  --ink-faint: oklch(63% 0.01 60);
+  --ink-inverse: oklch(97% 0.006 85);
+
+  /* ------------------------------------------------------------------ lines */
+  --rule: oklch(88% 0.01 80);
+  --rule-strong: oklch(78% 0.014 75);
+
+  /* ----------------------------------------------------------------- accent */
+  --accent: oklch(63% 0.16 62);
+  --accent-hover: oklch(56% 0.17 60);
+  --accent-soft: oklch(93% 0.05 75);
+  --accent-ink: oklch(30% 0.09 60);
+  --focus-ring: oklch(58% 0.17 250);
+
+  /* ------------------------------------------------------------- stage scale */
+  --stage-intake: oklch(58% 0.06 250);
+  --stage-design: oklch(55% 0.13 285);
+  --stage-permitting: oklch(64% 0.14 75);
+  --stage-installation: oklch(58% 0.16 35);
+  --stage-qa: oklch(56% 0.1 195);
+  --stage-complete: oklch(55% 0.12 150);
+
+  --stage-intake-soft: oklch(94% 0.02 250);
+  --stage-design-soft: oklch(94% 0.035 285);
+  --stage-permitting-soft: oklch(94% 0.05 75);
+  --stage-installation-soft: oklch(94% 0.045 35);
+  --stage-qa-soft: oklch(94% 0.035 195);
+  --stage-complete-soft: oklch(94% 0.04 150);
+
+  /* ------------------------------------------------------------------ state */
+  --danger: oklch(52% 0.19 27);
+  --danger-soft: oklch(94% 0.04 27);
+  --warning: oklch(66% 0.15 70);
+  --success: oklch(54% 0.13 150);
+
+  /* ------------------------------------------------------------- typography */
+  --font-sans:
+    'Inter var', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono:
+    ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.375rem;
+  --text-2xl: clamp(1.6rem, 1.2rem + 1.2vw, 2.15rem);
+  --text-display: clamp(2.2rem, 1.4rem + 3vw, 3.6rem);
+
+  --tracking-tight: -0.018em;
+  --tracking-wide: 0.08em;
+
+  /* ----------------------------------------------------------------- rhythm */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4.5rem;
+
+  --radius-sm: 3px;
+  --radius: 6px;
+  --radius-lg: 10px;
+
+  /* ---------------------------------------------------------------- surface */
+  --shadow-sm: 0 1px 2px oklch(20% 0.02 60 / 0.06);
+  --shadow: 0 2px 6px oklch(20% 0.02 60 / 0.08), 0 1px 2px oklch(20% 0.02 60 / 0.06);
+  --shadow-lg:
+    0 16px 40px oklch(20% 0.02 60 / 0.14), 0 2px 8px oklch(20% 0.02 60 / 0.08);
+
+  --duration-fast: 120ms;
+  --duration: 220ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --rail-width: 15rem;
+  --header-height: 3.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --ground: oklch(18% 0.012 60);
+    --surface: oklch(21.5% 0.014 60);
+    --surface-raised: oklch(25% 0.016 60);
+    --surface-sunken: oklch(15% 0.01 60);
+    --surface-inverse: oklch(95% 0.006 85);
+
+    --ink: oklch(94% 0.008 85);
+    --ink-muted: oklch(72% 0.01 75);
+    --ink-faint: oklch(56% 0.012 70);
+    --ink-inverse: oklch(20% 0.014 60);
+
+    --rule: oklch(30% 0.014 60);
+    --rule-strong: oklch(40% 0.016 60);
+
+    --accent: oklch(76% 0.15 68);
+    --accent-hover: oklch(83% 0.14 70);
+    --accent-soft: oklch(30% 0.06 62);
+    --accent-ink: oklch(90% 0.08 75);
+    --focus-ring: oklch(72% 0.15 250);
+
+    --stage-intake: oklch(72% 0.08 250);
+    --stage-design: oklch(72% 0.12 285);
+    --stage-permitting: oklch(78% 0.13 75);
+    --stage-installation: oklch(72% 0.14 35);
+    --stage-qa: oklch(72% 0.1 195);
+    --stage-complete: oklch(72% 0.12 150);
+
+    --stage-intake-soft: oklch(28% 0.035 250);
+    --stage-design-soft: oklch(28% 0.05 285);
+    --stage-permitting-soft: oklch(30% 0.055 75);
+    --stage-installation-soft: oklch(29% 0.055 35);
+    --stage-qa-soft: oklch(28% 0.045 195);
+    --stage-complete-soft: oklch(28% 0.05 150);
+
+    --danger: oklch(70% 0.16 27);
+    --danger-soft: oklch(29% 0.06 27);
+    --warning: oklch(80% 0.13 70);
+    --success: oklch(72% 0.12 150);
+
+    --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.4);
+    --shadow: 0 2px 8px oklch(0% 0 0 / 0.45);
+    --shadow-lg: 0 18px 44px oklch(0% 0 0 / 0.55);
+  }
+}

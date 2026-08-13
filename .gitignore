@@ -1,0 +1,38 @@
+# Python / Django
+.venv/
+__pycache__/
+*.py[cod]
+db.sqlite3
+staticfiles/
+media/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Node / Angular
+node_modules/
+dist/
+.angular/
+*.tsbuildinfo
+
+# Env & secrets — .env.example is committed, .env never is
+.env
+.env.*
+!.env.example
+
+# Test artifacts
+playwright-report/
+test-results/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local tooling and working notes — not part of the project
+.claude/
+.mcp.json
+NUMBERS.md
+docs/roadmap.md
