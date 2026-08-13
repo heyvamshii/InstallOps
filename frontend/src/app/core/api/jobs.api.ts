@@ -44,13 +44,6 @@ export class JobsApi {
     });
   }
 
-  /** Count-only probe: page size still applies, but we only read `count`. */
-  count(query: Partial<JobQuery> & { page: number }): Observable<Paginated<JobRow>> {
-    return this.http.get<Paginated<JobRow>>(`${this.base}/jobs/`, {
-      params: toHttpParams({ ...EMPTY_QUERY, ...query }),
-    });
-  }
-
   get(id: number): Observable<JobDetail> {
     return this.http.get<JobDetail>(`${this.base}/jobs/${id}/`);
   }
@@ -100,15 +93,3 @@ export class JobsApi {
     return this.http.get<User[]>(`${environment.apiBaseUrl}/api/auth/users/`, { params });
   }
 }
-
-const EMPTY_QUERY: JobQuery = {
-  page: 1,
-  ordering: '',
-  search: '',
-  stage: [],
-  priority: [],
-  assigned_tech: null,
-  on_hold: null,
-  overdue: null,
-  has_rework: null,
-};

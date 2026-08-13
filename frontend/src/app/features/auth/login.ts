@@ -5,6 +5,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { userMessageFrom } from '../../core/api/api-error';
 import { AuthService } from '../../core/auth/auth.service';
 import { homeFor } from '../../core/auth/role-home';
+import { STAGE_LABEL, STAGES } from '../../core/domain/job.model';
 
 interface DemoAccount {
   username: string;
@@ -40,7 +41,7 @@ const DEMO_ACCOUNTS: readonly DemoAccount[] = [
 
         <ol class="pipeline" aria-label="Job lifecycle">
           @for (stage of stages; track stage) {
-            <li class="pipeline__step stage-{{ stage }}">{{ stage }}</li>
+            <li class="pipeline__step stage-{{ stage }}">{{ stageLabel[stage] }}</li>
           }
         </ol>
       </section>
@@ -260,7 +261,9 @@ export class Login {
   private readonly route = inject(ActivatedRoute);
   private readonly fb = inject(FormBuilder);
 
-  protected readonly stages = ['INTAKE', 'DESIGN', 'PERMITTING', 'INSTALLATION', 'QA', 'COMPLETE'];
+  /** From the domain model, so the marketing strip cannot drift from the state machine. */
+  protected readonly stages = STAGES;
+  protected readonly stageLabel = STAGE_LABEL;
   protected readonly demoAccounts = DEMO_ACCOUNTS;
   protected readonly busy = signal(false);
   protected readonly error = signal('');

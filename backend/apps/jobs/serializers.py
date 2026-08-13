@@ -7,8 +7,10 @@ expensive one and is only used for a single job.
 
 from rest_framework import serializers
 
+from apps.accounts.constants import Role
+
 from .constants import STAGE_ORDER, Stage
-from .models import ChecklistItem, Customer, Document, Job, Note, StageTransition
+from .models import ChecklistItem, Customer, Document, DocumentKind, Job, Note, StageTransition
 from .services import available_transitions
 
 
@@ -52,6 +54,15 @@ class NoteSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "author", "author_name", "created_at")
 
 
+#: Document kinds only certain roles may produce. Absent kinds are open to any role
+#: that can already see the job.
+DOCUMENT_KIND_ROLES: dict[str, frozenset[str]] = {
+    DocumentKind.DESIGN_PACKAGE: frozenset({Role.DESIGNER, Role.ADMIN}),
+    DocumentKind.PERMIT: frozenset({Role.COORDINATOR, Role.ADMIN}),
+    DocumentKind.INSPECTION: frozenset({Role.COORDINATOR, Role.ADMIN}),
+}
+
+
 class DocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
@@ -65,6 +76,24 @@ class DocumentSerializer(serializers.ModelSerializer):
             "created_at",
         )
         read_only_fields = ("id", "uploaded_by", "created_at")
+
+    def validate_kind(self, value: str) -> str:
+        """A Field Tech may upload site photos, not a design package.
+
+        The permission class gates *whether* a role may upload at all; this gates
+        *what* they may claim the upload is.
+        """
+        allowed = DOCUMENT_KIND_ROLES.get(value)
+        if allowed is None:
+            return value
+
+        request = self.context.get("request")
+        role = getattr(request.user, "role", None) if request else None
+        if role not in allowed:
+            raise serializers.ValidationError(
+                f"Your role cannot upload documents of kind {value}."
+            )
+        return value
 
 
 class JobListSerializer(serializers.ModelSerializer):

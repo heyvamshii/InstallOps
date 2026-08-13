@@ -12,7 +12,7 @@
 A **Job** is one field installation, from customer signature to closed-out install.
 It occupies exactly one stage at a time.
 
-| # | Stage          | Owner role   | Entered when                                            | Exit condition                          |
+| # | Stage          | Owner role   | Entered when                                            | Operational exit criterion              |
 |---|----------------|--------------|---------------------------------------------------------|-----------------------------------------|
 | 1 | `INTAKE`       | Coordinator  | Job created from a signed contract                       | Site address, customer, and scope captured |
 | 2 | `DESIGN`       | Designer     | Intake complete                                          | Design package uploaded and approved    |
@@ -20,6 +20,17 @@ It occupies exactly one stage at a time.
 | 4 | `INSTALLATION` | Field Tech   | Permit approved and crew scheduled                       | Install checklist complete + photos     |
 | 5 | `QA`           | Coordinator  | Install complete                                         | Inspection **passed**                   |
 | 6 | `COMPLETE`     | Coordinator  | Inspection passed                                        | Terminal                                |
+
+> **The exit criteria are guidance for the humans, not gates in the code.** The stage
+> owner decides when their stage is finished; the software does not refuse to advance a
+> job whose checklist is incomplete. That is deliberate — reality diverges from a
+> checklist often enough (a permit arrives by phone, a photo is on someone's camera)
+> that hard-gating would push people to work around the system, which is exactly how a
+> tracker stops reflecting the truth. The checklist is a visible completeness signal
+> instead: the detail screen shows `3/8` and the job carries that record.
+>
+> Everything in §1.1 below *is* enforced in code and covered by tests. The distinction
+> matters: this table is process documentation, that list is the specification.
 
 ### Transition graph
 
@@ -30,7 +41,7 @@ INTAKE → DESIGN → PERMITTING → INSTALLATION → QA → COMPLETE
                                    QA fail = rework
 ```
 
-**Rules — these are the tested invariants:**
+### 1.1 Enforced rules — the tested invariants
 
 1. **Forward-only, one step at a time.** `INTAKE → PERMITTING` is invalid. No skipping.
 2. **One backward edge exists:** `QA → INSTALLATION`, and only on a *failed*
@@ -67,6 +78,11 @@ Roles are mutually exclusive. One user has exactly one role.
 | `FIELD_TECH`  | **Only jobs where `assigned_tech == request.user`** |
 | `ADMIN`       | All jobs                                        |
 
+The same rule is applied independently at every entry point that can read job data — the
+REST viewsets, the nested checklist endpoint, the customer directory, and the GraphQL
+resolver. Each re-applies the filter rather than trusting a caller, because a second way
+into the data is a second way to leak it.
+
 Scoping is enforced in `get_queryset()` on the server. The Angular route guards and
 `*appIfRole` directive are **UX only** — they hide controls the user would be
 rejected for anyway. Every permission is tested from the API side, unauthenticated
@@ -92,6 +108,17 @@ Tech and someone else's job.
 | Complete install checklist    | ❌          | ❌       | ✅ (own)   | ✅    |
 | Manage users                  | ❌          | ❌       | ❌         | ✅    |
 | View org dashboard            | ✅          | ❌       | ❌         | ✅    |
+| Tick a checklist item         | own stages  | own stages | own stages (own jobs) | ✅ |
+| Add a note                    | ✅          | ✅       | ✅ (own)   | ✅    |
+| Upload a site photo           | ✅          | ✅       | ✅ (own)   | ✅    |
+| Upload a permit / inspection  | ✅          | ❌       | ❌         | ✅    |
+| Read the customer directory   | ✅          | ✅       | own jobs only | ✅ |
+
+"own stages" means the stages that role owns in the table above: a Designer may tick
+Design items, a Coordinator may tick Intake, Permitting, QA, and Complete items, and a
+Field Tech may tick Installation items on jobs assigned to them. Checklist rows for all
+six stages exist from the moment a job is created, so scoping by job alone would let any
+role tick anyone's work.
 
 ---
 

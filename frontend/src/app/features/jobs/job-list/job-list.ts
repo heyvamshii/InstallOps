@@ -1,6 +1,14 @@
 import { ScrollingModule } from '@angular/cdk/scrolling';
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, effect, inject } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  signal,
+  untracked,
+} from '@angular/core';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -57,6 +65,9 @@ export class JobList {
 
   protected readonly activeFilters = computed(() => activeFilterCount(this.query()));
 
+  /** The state most recently asked for, which may still be in flight to the router. */
+  private readonly requested = signal<JobQuery | null>(null);
+
   protected readonly state = toSignal(
     toObservable(this.query).pipe(
       switchMap((query) =>
@@ -72,14 +83,22 @@ export class JobList {
     { initialValue: LOADING },
   );
 
+  /**
+   * The last successful page, kept so the table does not flash "0 jobs matching" on
+   * every filter change while the next request is in flight.
+   */
+  private readonly lastLoaded = signal<Paginated<JobRow> | null>(null);
+
   protected readonly rows = computed(() => {
     const state = this.state();
-    return state.status === 'ok' ? state.data.results : [];
+    if (state.status === 'ok') return state.data.results;
+    return state.status === 'loading' ? (this.lastLoaded()?.results ?? []) : [];
   });
 
   protected readonly total = computed(() => {
     const state = this.state();
-    return state.status === 'ok' ? state.data.count : 0;
+    if (state.status === 'ok') return state.data.count;
+    return state.status === 'loading' ? (this.lastLoaded()?.count ?? 0) : 0;
   });
 
   protected readonly pageCount = computed(() => Math.max(1, Math.ceil(this.total() / PAGE_SIZE)));
@@ -98,6 +117,18 @@ export class JobList {
   );
 
   constructor() {
+    // Once the router echoes a change back, the pending intent has landed.
+    effect(() => {
+      this.query();
+      this.requested.set(null);
+    });
+
+    // Remember the last good page so loading keeps showing it rather than zero.
+    effect(() => {
+      const state = this.state();
+      if (state.status === 'ok') this.lastLoaded.set(state.data);
+    });
+
     // Seed the box from the URL on first load / back navigation, without echoing back.
     effect(() => {
       const fromUrl = this.query().search;
@@ -114,8 +145,21 @@ export class JobList {
     });
   }
 
+  /**
+   * Merge a change into the table's state and push it to the URL.
+   *
+   * Merging against `requested` rather than `query` matters: `query` only updates once
+   * the router has echoed the new parameters back, so two quick clicks would both build
+   * on the pre-first-click state and the router would drop the earlier navigation.
+   */
   protected patch(partial: Partial<JobQuery>, replaceUrl = false): void {
-    const next: JobQuery = { ...this.query(), ...partial };
+    // `untracked` because patch() is a command, not a derivation. The debounced-search
+    // effect calls it, and without this the effect would take a dependency on the very
+    // signals patch() updates and re-run itself.
+    const base = untracked(() => this.requested() ?? this.query());
+    const next: JobQuery = { ...base, ...partial };
+    this.requested.set(next);
+
     void this.router.navigate([], {
       relativeTo: this.route,
       queryParams: toQueryParams(next),
@@ -156,5 +200,18 @@ export class JobList {
 
   protected trackRow(_index: number, row: JobRow): number {
     return row.id;
+  }
+
+  protected onTechChange(event: Event): void {
+    const value = (event.target as HTMLSelectElement).value;
+    this.patch({ assigned_tech: value ? Number(value) : null, page: 1 });
+  }
+
+  /** Accessible name for a sort control, carrying the current state. */
+  protected sortLabel(field: string, label: string): string {
+    const direction = this.direction(field);
+    if (direction === 'asc') return `Sort by ${label}, currently ascending`;
+    if (direction === 'desc') return `Sort by ${label}, currently descending`;
+    return `Sort by ${label}`;
   }
 }

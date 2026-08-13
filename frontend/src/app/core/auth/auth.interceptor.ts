@@ -42,7 +42,7 @@ export const authInterceptor: HttpInterceptorFn = (
       return auth.refresh().pipe(
         switchMap((fresh) => next(withBearer(request, fresh))),
         catchError((refreshError: unknown) => {
-          auth.logout();
+          // refresh() has already cleared the session; this is just the redirect.
           void router.navigate(['/login'], {
             queryParams: { returnUrl: router.url },
           });

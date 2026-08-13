@@ -7,6 +7,7 @@ a job, which is what makes the audit trail trustworthy.
 
 from django.db import IntegrityError, transaction
 
+from apps.accounts.constants import Role
 from apps.accounts.models import User
 
 from .checklists import template_for
@@ -120,7 +121,7 @@ def transition_job(
 @transaction.atomic
 def set_hold(*, job: Job, actor: User, on_hold: bool, reason: str = "") -> Job:
     """Put a job on hold or release it. Holds block every transition until released."""
-    if STAGE_OWNER[Stage.INTAKE] != actor.role and not actor.is_privileged:
+    if actor.role != Role.COORDINATOR and not actor.is_privileged:
         raise NotStageOwner("Only a Coordinator or Admin can hold or release a job.")
 
     reason = (reason or "").strip()

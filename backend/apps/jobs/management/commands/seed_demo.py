@@ -9,8 +9,9 @@ import random
 from datetime import timedelta
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
@@ -108,9 +109,24 @@ class Command(BaseCommand):
             action="store_true",
             help="Delete existing jobs, customers, and demo users first.",
         )
+        parser.add_argument(
+            "--allow-production",
+            action="store_true",
+            help="Required to seed demo accounts when DEBUG=False.",
+        )
 
     @transaction.atomic
     def handle(self, *args, **options) -> None:
+        # This command creates a superuser whose password is published in the README.
+        # Running it against production would hand anyone who read the repo an admin
+        # account, so it refuses unless the operator says so out loud.
+        if not settings.DEBUG and not options["allow_production"]:
+            raise CommandError(
+                "seed_demo creates demo accounts with a well-known password and is "
+                "refusing to run with DEBUG=False. Pass --allow-production and set "
+                "--password if this is a deliberately seeded demo environment."
+            )
+
         rng = random.Random(options["seed"])
 
         if options["flush"]:

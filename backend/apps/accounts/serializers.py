@@ -25,6 +25,28 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.get_full_name() or obj.username
 
 
+class LogoutSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
+
+
+class DirectoryUserSerializer(serializers.ModelSerializer):
+    """The shape everyone signed in may read.
+
+    The job table's "assigned tech" filter needs a name and an id. It does not need
+    colleagues' email addresses and phone numbers, so those are not served here.
+    """
+
+    full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ("id", "username", "full_name", "role")
+        read_only_fields = fields
+
+    def get_full_name(self, obj: User) -> str:
+        return obj.get_full_name() or obj.username
+
+
 class AdminUserSerializer(UserSerializer):
     """Role is writable here and nowhere else.
 

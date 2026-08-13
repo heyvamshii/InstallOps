@@ -23,7 +23,9 @@ dist/
 
 # Test artifacts
 playwright-report/
+playwright/.cache/
 test-results/
+blob-report/
 
 # Editors / OS
 .idea/

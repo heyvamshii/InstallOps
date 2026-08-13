@@ -11,6 +11,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
+from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -28,7 +29,9 @@ def env_list(key: str, default: str = "") -> list[str]:
 
 # --------------------------------------------------------------------------- core
 
-DEBUG = env_bool("DEBUG", True)
+# Defaults to False so that a deployment which forgets to set DEBUG fails closed.
+# Local development opts in explicitly via backend/.env — see .env.example.
+DEBUG = env_bool("DEBUG", False)
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "")
 if not SECRET_KEY:
@@ -52,6 +55,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # third party
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "django_filters",
     "drf_spectacular",
@@ -63,6 +67,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "config.middleware.RequestLogMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
@@ -134,19 +139,32 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": False,
+    # Rotated and logged-out tokens are revoked server-side. Without this a leaked
+    # refresh token stays valid for its full lifetime even after the user signs out.
+    "BLACKLIST_AFTER_ROTATION": True,
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
+
+# Upload limits. Django will otherwise stream an unbounded body to a temp file.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
+ALLOWED_DOCUMENT_EXTENSIONS = ("pdf", "png", "jpg", "jpeg", "webp", "heic", "dwg")
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "InstallOps API",
     "DESCRIPTION": "Field installation job tracker — 6-stage lifecycle, 4 roles.",
     "VERSION": "0.1.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    # from_stage and to_stage share the Stage choices; name the generated enum once.
+    "ENUM_NAME_OVERRIDES": {"StageEnum": "apps.jobs.constants.Stage.choices"},
 }
 
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", "http://localhost:4200")
 CORS_ALLOW_CREDENTIALS = True
+# The browser must be allowed to send and read the correlation id.
+CORS_ALLOW_HEADERS = (*default_headers, "x-request-id")
+CORS_EXPOSE_HEADERS = ("X-Request-ID",)
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", "http://localhost:4200")
 
 # --------------------------------------------------------------------------- auth
@@ -181,16 +199,27 @@ MEDIA_ROOT = BASE_DIR / "media"
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "request_id": {"()": "config.middleware.RequestIDFilter"},
+    },
     "formatters": {
         "verbose": {
-            "format": "{levelname} {asctime} {name} {message}",
+            "format": "{levelname} {asctime} [{request_id}] {name} {message}",
             "style": "{",
         },
     },
     "handlers": {
-        "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+            "filters": ["request_id"],
+        },
     },
     "root": {"handlers": ["console"], "level": os.environ.get("LOG_LEVEL", "INFO")},
+    "loggers": {
+        # One line per request from our own middleware; Django's duplicate is noise.
+        "django.server": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+    },
 }
 
 # --------------------------------------------------------------- security (prod)
@@ -222,6 +251,10 @@ if SENTRY_DSN:
 
 # -------------------------------------------------------------------------- email
 
-MAILERS = {
-    "default": {"BACKEND": "django.core.mail.backends.console.EmailBackend"},
-}
+# The app sends no email. In development anything that tried would print to the console;
+# in production Django's SMTP default applies, so the deployment check does not have to
+# be told to ignore a development-only backend.
+if DEBUG:
+    MAILERS = {
+        "default": {"BACKEND": "django.core.mail.backends.console.EmailBackend"},
+    }

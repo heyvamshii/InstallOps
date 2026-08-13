@@ -85,7 +85,13 @@
   </section>
 
   @if (showHoldForm()) {
-    <form class="inline-form" (ngSubmit)="toggleHold()">
+    <!--
+      Native (submit) with an explicit preventDefault, not (ngSubmit).
+      ngSubmit is emitted by NgForm/FormGroupDirective; these forms carry neither
+      (single reactive controls, no formGroup), so an ngSubmit binding would never fire
+      and the browser would perform a real form submit and reload the page.
+    -->
+    <form class="inline-form" (submit)="$event.preventDefault(); toggleHold()">
       <label class="field__label" for="hold-reason">Why is this on hold?</label>
       <input id="hold-reason" class="input" [formControl]="holdReasonControl" />
       <div class="inline-form__actions">
@@ -100,7 +106,10 @@
   }
 
   @if (reasonFor(); as target) {
-    <form class="inline-form inline-form--danger" (ngSubmit)="confirmReason()">
+    <form
+      class="inline-form inline-form--danger"
+      (submit)="$event.preventDefault(); confirmReason()"
+    >
       <label class="field__label" for="reason">
         Reason for sending this back to {{ stageLabel[target] }}
       </label>
@@ -161,7 +170,7 @@
       <section class="panel block">
         <header class="block__head"><h2>Notes</h2></header>
 
-        <form class="note-form" (ngSubmit)="addNote()">
+        <form class="note-form" (submit)="$event.preventDefault(); addNote()">
           <textarea
             class="textarea"
             [formControl]="noteControl"

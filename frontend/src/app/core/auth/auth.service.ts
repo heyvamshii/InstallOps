@@ -70,11 +70,38 @@ export class AuthService {
       );
   }
 
-  logout(): void {
+  /**
+   * Sign out.
+   *
+   * Clearing local state is not enough on its own — the refresh token would stay valid
+   * for its full lifetime — so the token is also revoked server-side. That call is
+   * fire-and-forget: local state is cleared first and unconditionally, because a user
+   * who clicked "sign out" must end up signed out even if the network is down.
+   */
+  logout(revokeRemotely = true): void {
+    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+    const accessToken = this.accessToken();
+
     this.accessToken.set(null);
     this.currentUser.set(null);
     this.inFlightRefresh = null;
     localStorage.removeItem(REFRESH_TOKEN_KEY);
+
+    if (!revokeRemotely || !refreshToken || !accessToken) return;
+
+    // Carries its own credentials and skips the interceptor: the tokens have already
+    // been cleared above, so the interceptor would send this unauthenticated and then
+    // try to refresh the very session being ended.
+    this.http
+      .post(
+        `${this.base}/logout/`,
+        { refresh: refreshToken },
+        {
+          context: skipAuth(),
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      )
+      .subscribe({ error: () => undefined });
   }
 
   /**
@@ -108,7 +135,9 @@ export class AuthService {
           next: () => (this.inFlightRefresh = null),
           error: () => {
             this.inFlightRefresh = null;
-            this.logout();
+            // The refresh token is already dead — there is nothing to revoke, and the
+            // call would fail. This is the single place a failed refresh signs out.
+            this.logout(false);
           },
         }),
         shareReplay({ bufferSize: 1, refCount: false }),
@@ -135,7 +164,7 @@ export class AuthService {
       switchMap(() => this.loadCurrentUser()),
       map(() => true),
       catchError(() => {
-        this.logout();
+        this.logout(false);
         return of(false);
       }),
     );

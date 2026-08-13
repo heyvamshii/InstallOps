@@ -5,7 +5,7 @@
   </div>
 
   <div class="head__count">
-    <span class="tabular head__count-value">{{ total() }}</span>
+    <span class="tabular head__count-value" data-testid="result-count">{{ total() }}</span>
     <span class="head__count-label">{{ total() === 1 ? 'job' : 'jobs' }} matching</span>
   </div>
 </header>
@@ -82,7 +82,7 @@
         id="tech-filter"
         class="select"
         [value]="query().assigned_tech ?? ''"
-        (change)="patch({ assigned_tech: $any($event.target).value ? +$any($event.target).value : null, page: 1 })"
+        (change)="onTechChange($event)"
       >
         <option value="">Any tech</option>
         @for (tech of techs(); track tech.id) {
@@ -100,35 +100,54 @@
 </section>
 
 <div class="table" [class.table--busy]="state().status === 'loading'">
-  <div class="table__head" role="row">
-    <button type="button" class="th th--sortable" (click)="sortBy('job_number')" role="columnheader">
+  <!--
+    Presented as a labelled list rather than an ARIA table. Each row is a single link,
+    and the CDK virtual-scroll viewport injects its own wrapper elements between the
+    container and the rows, which would break strict table/row/cell nesting anyway.
+    Sort controls carry their state in an accessible name instead of aria-sort.
+  -->
+  <div class="table__head">
+    <button
+      type="button"
+      class="th th--sortable"
+      (click)="sortBy('job_number')"
+      [attr.aria-label]="sortLabel('job_number', 'job number')"
+    >
       Job
       <span class="th__dir" aria-hidden="true">{{ direction('job_number') === 'asc' ? '↑' : direction('job_number') === 'desc' ? '↓' : '' }}</span>
     </button>
-    <span class="th" role="columnheader">Customer</span>
-    <button type="button" class="th th--sortable" (click)="sortBy('stage')" role="columnheader">
+    <span class="th" aria-hidden="true">Customer</span>
+    <button
+      type="button"
+      class="th th--sortable"
+      (click)="sortBy('stage')"
+      [attr.aria-label]="sortLabel('stage', 'stage')"
+    >
       Stage
       <span class="th__dir" aria-hidden="true">{{ direction('stage') === 'asc' ? '↑' : direction('stage') === 'desc' ? '↓' : '' }}</span>
     </button>
-    <span class="th" role="columnheader">Site</span>
-    <span class="th th--num" role="columnheader">System</span>
-    <span class="th" role="columnheader">Tech</span>
+    <span class="th" aria-hidden="true">Site</span>
+    <span class="th th--num" aria-hidden="true">System</span>
+    <span class="th" aria-hidden="true">Tech</span>
     <button
       type="button"
       class="th th--sortable"
       (click)="sortBy('target_completion_date')"
-      role="columnheader"
+      [attr.aria-label]="sortLabel('target_completion_date', 'due date')"
     >
       Due
       <span class="th__dir" aria-hidden="true">{{ direction('target_completion_date') === 'asc' ? '↑' : direction('target_completion_date') === 'desc' ? '↓' : '' }}</span>
     </button>
   </div>
 
-  @switch (state().status) {
+  @let listState = state();
+  @switch (listState.status) {
     @case ('error') {
       <div class="state state--error" role="alert">
         <p class="state__title">That didn’t load</p>
-        <p class="state__body">{{ $any(state()).message }}</p>
+        @if (listState.status === 'error') {
+          <p class="state__body">{{ listState.message }}</p>
+        }
       </div>
     }
     @default {
@@ -151,6 +170,7 @@
           <a
             *cdkVirtualFor="let row of rows(); trackBy: trackRow"
             class="row"
+            data-testid="job-row"
             [routerLink]="['/jobs', row.id]"
             [class.row--held]="row.on_hold"
           >

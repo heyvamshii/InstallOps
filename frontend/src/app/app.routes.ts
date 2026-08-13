@@ -18,8 +18,9 @@ export const routes: Routes = [
       {
         path: 'dashboard',
         canMatch: [roleGuard('COORDINATOR', 'ADMIN')],
-        loadComponent: () => import('./features/dashboard/dashboard').then((m) => m.Dashboard),
-        title: 'Overview · InstallOps',
+        // loadChildren, not loadComponent, so the route's Apollo providers stay lazy too.
+        loadChildren: () =>
+          import('./features/dashboard/dashboard.routes').then((m) => m.routes),
       },
       {
         path: 'jobs',

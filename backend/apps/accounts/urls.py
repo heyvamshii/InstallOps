@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 
-from .views import InstallOpsTokenObtainPairView, MeView, UserViewSet
+from .views import InstallOpsTokenObtainPairView, LogoutView, MeView, UserViewSet
 
 app_name = "accounts"
 
@@ -13,6 +13,7 @@ urlpatterns = [
     path("token/", InstallOpsTokenObtainPairView.as_view(), name="token-obtain-pair"),
     path("token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
     path("token/verify/", TokenVerifyView.as_view(), name="token-verify"),
+    path("logout/", LogoutView.as_view(), name="logout"),
     path("me/", MeView.as_view(), name="me"),
     path("", include(router.urls)),
 ]

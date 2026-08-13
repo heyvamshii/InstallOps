@@ -1,24 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { forkJoin, map, of } from 'rxjs';
-import { catchError } from 'rxjs/operators';
+import { Apollo } from 'apollo-angular';
 
-import { JobsApi } from '../../core/api/jobs.api';
-import { JobRow } from '../../core/domain/api.model';
-import { STAGES, STAGE_LABEL, Stage } from '../../core/domain/job.model';
-
-interface StageCount {
-  stage: Stage;
-  count: number;
-}
-
-interface Snapshot {
-  stages: StageCount[];
-  overdue: number;
-  rework: number;
-  held: number;
-  recent: JobRow[];
-}
+import { Overview, OVERVIEW_QUERY, OverviewQueryResult } from '../../core/api/overview.graphql';
+import { STAGE_LABEL } from '../../core/domain/job.model';
 
 @Component({
   selector: 'app-dashboard',
@@ -30,9 +15,10 @@ interface Snapshot {
         <p class="eyebrow">Operations</p>
         <h1>Where the work is stuck</h1>
       </div>
-      @if (roundTrips() > 0) {
-        <p class="head__probe tabular" title="Baseline for the GraphQL comparison">
-          {{ roundTrips() }} REST round trips
+      @if (data(); as snapshot) {
+        <p class="head__total">
+          <span class="tabular head__total-value">{{ snapshot.total }}</span>
+          <span class="head__total-label">jobs tracked</span>
         </p>
       }
     </header>
@@ -47,7 +33,7 @@ interface Snapshot {
             [routerLink]="['/jobs']"
             [queryParams]="{ stage: entry.stage }"
           >
-            <span class="rail__label">{{ stageLabel[entry.stage] }}</span>
+            <span class="rail__label">{{ entry.label }}</span>
             <span class="rail__value tabular">{{ entry.count }}</span>
             <span class="rail__bar" [style.--fill.%]="percentOf(entry.count)"></span>
           </a>
@@ -75,10 +61,15 @@ interface Snapshot {
           @for (job of snapshot.recent; track job.id) {
             <li>
               <a class="recent__row" [routerLink]="['/jobs', job.id]">
-                <span class="tabular recent__id">{{ job.job_number }}</span>
-                <span class="recent__customer">{{ job.customer_name }}</span>
+                <span class="tabular recent__id">{{ job.jobNumber }}</span>
+                <span class="recent__customer">{{ job.customerName }}</span>
                 <span class="stage-chip stage-{{ job.stage }}">{{ stageLabel[job.stage] }}</span>
-                <span class="recent__site">{{ job.site_city }}, {{ job.site_state }}</span>
+                <span class="recent__site">
+                  {{ job.siteCity }}, {{ job.siteState }}
+                  @if (job.onHold) {
+                    <span class="recent__hold">held</span>
+                  }
+                </span>
               </a>
             </li>
           }
@@ -108,7 +99,19 @@ interface Snapshot {
       font-size: var(--text-2xl);
     }
 
-    .head__probe {
+    .head__total {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-2);
+    }
+
+    .head__total-value {
+      font-size: var(--text-2xl);
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .head__total-label {
       color: var(--ink-faint);
       font-size: var(--text-xs);
     }
@@ -240,6 +243,16 @@ interface Snapshot {
       color: var(--ink-faint);
     }
 
+    .recent__hold {
+      margin-left: 0.3rem;
+      padding: 0 0.25rem;
+      border-radius: var(--radius-sm);
+      background: var(--warning);
+      color: oklch(20% 0.03 70);
+      font-size: var(--text-2xs);
+      font-weight: 700;
+    }
+
     .state {
       padding: var(--space-6);
       color: var(--ink-muted);
@@ -270,62 +283,32 @@ interface Snapshot {
   `,
 })
 export class Dashboard {
-  private readonly api = inject(JobsApi);
+  private readonly apollo = inject(Apollo);
 
   protected readonly stageLabel = STAGE_LABEL;
-  protected readonly data = signal<Snapshot | null>(null);
+  protected readonly data = signal<Overview | null>(null);
   protected readonly error = signal('');
-  protected readonly roundTrips = signal(0);
 
-  protected readonly busiestStage = computed(() =>
+  private readonly busiestStage = computed(() =>
     Math.max(1, ...(this.data()?.stages ?? []).map((entry) => entry.count)),
   );
 
   constructor() {
-    this.load();
-  }
-
-  /**
-   * Deliberately composed from separate REST calls — one per figure.
-   *
-   * This is the baseline the planned single GraphQL query has to beat. The round-trip
-   * count is rendered in the header so the comparison is measured, not asserted.
-   */
-  private load(): void {
-    const stageProbes = STAGES.map((stage) =>
-      this.api.count({ page: 1, stage: [stage] }).pipe(map((page) => ({ stage, count: page.count }))),
-    );
-
-    const requests = {
-      stages: forkJoin(stageProbes),
-      overdue: this.api.count({ page: 1, overdue: true }).pipe(map((page) => page.count)),
-      held: this.api.count({ page: 1, on_hold: true }).pipe(map((page) => page.count)),
-      rework: this.api.count({ page: 1, has_rework: true }).pipe(map((page) => page.count)),
-      recent: this.api
-        .list({
-          page: 1,
-          ordering: '-updated_at',
-          search: '',
-          stage: [],
-          priority: [],
-          assigned_tech: null,
-          on_hold: null,
-          overdue: null,
-          has_rework: null,
-        })
-        .pipe(map((page) => page.results.slice(0, 8))),
-    };
-
-    this.roundTrips.set(stageProbes.length + 4);
-
-    forkJoin(requests)
-      .pipe(catchError(() => of(null)))
-      .subscribe((snapshot) => {
-        if (!snapshot) {
-          this.error.set('The dashboard could not load. Try again shortly.');
-          return;
-        }
-        this.data.set(snapshot);
+    /**
+     * One request for the whole screen.
+     *
+     * `network-only` because operational counts are the point — a cached overview that
+     * says four jobs are overdue when six are is worse than a slower one.
+     */
+    this.apollo
+      .query<OverviewQueryResult>({ query: OVERVIEW_QUERY, fetchPolicy: 'network-only' })
+      .subscribe({
+        next: (result) => {
+          const overview = result.data?.overview;
+          if (overview) this.data.set(overview);
+          else this.error.set('The overview returned no data.');
+        },
+        error: () => this.error.set('The overview could not load. Try again shortly.'),
       });
   }
 

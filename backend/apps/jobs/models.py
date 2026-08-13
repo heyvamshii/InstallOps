@@ -7,6 +7,8 @@ quietly move a job by assigning to ``job.stage``.
 """
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.validators import FileExtensionValidator
 from django.db import models
 from django.utils import timezone
 
@@ -170,6 +172,19 @@ class DocumentKind(models.TextChoices):
     OTHER = "OTHER", "Other"
 
 
+def validate_document_size(value) -> None:
+    """Cap upload size.
+
+    Without this any authenticated user with access to a job could exhaust the
+    application's storage a single request at a time.
+    """
+    limit = settings.MAX_DOCUMENT_SIZE_BYTES
+    if value.size > limit:
+        raise ValidationError(
+            f"File is {value.size // 1024 // 1024} MB; the limit is {limit // 1024 // 1024} MB."
+        )
+
+
 class Document(models.Model):
     job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name="documents")
     kind = models.CharField(max_length=20, choices=DocumentKind.choices)
@@ -178,7 +193,14 @@ class Document(models.Model):
         choices=Stage.choices,
         help_text="The stage this document was produced for.",
     )
-    file = models.FileField(upload_to="job-documents/%Y/%m/", blank=True)
+    file = models.FileField(
+        upload_to="job-documents/%Y/%m/",
+        blank=True,
+        validators=[
+            FileExtensionValidator(allowed_extensions=list(settings.ALLOWED_DOCUMENT_EXTENSIONS)),
+            validate_document_size,
+        ],
+    )
     original_name = models.CharField(max_length=255)
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="uploads"

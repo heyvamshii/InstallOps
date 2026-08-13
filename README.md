@@ -84,15 +84,20 @@ Roles, ownership, visibility scoping, and the full permission matrix are documen
 | UI behaviour | **Angular CDK** | Virtual scroll for the job table, plus overlay and a11y primitives — behaviour only, with custom design tokens on top |
 | Backend | **Django 6.1** | ORM, migrations, auth, admin; the boundary the state machine lives inside |
 | API | **Django REST Framework** | CRUD, filtering, ordering, pagination, and per-action permission classes |
+| Aggregate query | **Strawberry-Django** at `/graphql/` | One query behind the overview screen, replacing ten REST calls |
+| GraphQL client | **Apollo Angular** | Runs over Angular's HttpClient, so GraphQL and REST share one auth path |
 | Auth | **SimpleJWT** | Short-lived access tokens with refresh rotation |
 | Filters | **django-filter** | Turns the table's filter controls into safe ORM queries |
 | API docs | **drf-spectacular** | OpenAPI schema and Swagger UI at `/api/docs/` |
 | Database | **PostgreSQL** | Relational integrity for the job graph, with indexes behind the filtered table |
 | Config | **dj-database-url**, **python-dotenv** | One `DATABASE_URL` drives local and production |
 | Driver | **psycopg 3** | Postgres adapter |
-| Tests | **pytest**, **pytest-django**, **factory-boy** | Covers the state machine and every cell of the permission matrix |
+| Tests | **pytest**, **pytest-django** | Covers the state machine, every cell of the permission matrix, and the GraphQL query |
 | Static | **WhiteNoise** | Hashed static assets served from the backend |
 | Server | **Gunicorn** | Production WSGI process |
+| Frontend tests | **Vitest** | Guards, HTTP interceptor, URL-state serialisation, domain rules |
+| End-to-end | **Playwright** | The lifecycle and access-control flows, driven through the real UI |
+| Errors | **Sentry** | Optional on both sides; the frontend client is a lazy chunk loaded only when a DSN is set |
 
 ---
 
@@ -111,6 +116,18 @@ apply optimistically and roll back to the previous state if the server rejects t
 **Overview** — jobs by stage, counts for overdue, held, and reworked jobs, and recent
 movement. Every figure links through to the queue with the matching filter applied.
 
+This screen is the one place the app uses GraphQL. Assembled from REST it needed ten
+requests — six stage counts plus overdue, held, rework, and the recent list. A single
+`overview` query replaces them, and on the server the counts collapse into one conditional
+aggregation, so it is two database queries rather than ten request cycles. Measured on
+localhost against 210 seeded jobs, median of five runs: **96 ms across 10 requests → 12 ms
+in 1**. Most of that saving is server-side work rather than round-trip latency, since
+localhost has almost none.
+
+Apollo Client costs about 40 kB gzipped, so it is provided on the dashboard route rather
+than at the application root — it ships in that route's lazy chunk and never reaches
+users who don't open the overview.
+
 **People** — the user directory grouped by role (Admin only).
 
 ---
@@ -119,18 +136,34 @@ movement. Every figure links through to the queue with the matching filter appli
 
 Requires Python 3.12+, Node 20+, and a PostgreSQL database.
 
-**Backend**
+**Backend** — from the repository root:
 
 ```bash
 python -m venv backend/.venv
 ```
 
+Activate it. On macOS or Linux:
+
 ```bash
-backend/.venv/bin/pip install -r backend/requirements-dev.txt
+source backend/.venv/bin/activate
 ```
 
-Copy `backend/.env.example` to `backend/.env` and set `DATABASE_URL` and `SECRET_KEY`,
-then:
+On Windows (PowerShell):
+
+```powershell
+backend\.venv\Scripts\Activate.ps1
+```
+
+Then, with the environment active:
+
+```bash
+pip install -r backend/requirements-dev.txt
+```
+
+Copy `backend/.env.example` to `backend/.env` and set `SECRET_KEY` and `DATABASE_URL`
+(generate a key with `python -c "import secrets; print(secrets.token_urlsafe(50))"`).
+`DEBUG` defaults to `False`, so local development must set `DEBUG=True` — the example
+file already does.
 
 ```bash
 python backend/manage.py migrate
@@ -171,11 +204,25 @@ Sign in with `coordinator`, `designer`, `tech`, or `admin` — password `Install
 There are additional users (`coordinator2`, `designer2`, `tech2`, `tech3`) so that
 per-technician scoping is visible.
 
-**Tests**
+**Tests** — with the virtual environment active:
 
 ```bash
 cd backend && pytest
 ```
+
+```bash
+npm test --prefix frontend -- --watch=false
+```
+
+End-to-end needs a seeded API running on port 8000; it starts the dev server itself:
+
+```bash
+cd frontend && npx playwright test
+```
+
+97 backend tests (88% coverage), 56 frontend unit tests, and 15 Playwright specs. GitHub
+Actions runs all three on every push, plus `makemigrations --check`, `check --deploy`,
+and a production build — the backend job runs against PostgreSQL rather than SQLite.
 
 ---
 
@@ -194,6 +241,7 @@ cd backend && pytest
 | `POST /api/jobs/{id}/hold/` | Hold or release a job |
 | `POST /api/jobs/{id}/notes/` | Add a note |
 | `POST /api/checklist-items/{id}/toggle/` | Tick a checklist item |
+| `POST /graphql/` | The `overview` aggregate query — same JWT, same role scoping |
 | `GET /health/` | Database connectivity and pending migrations |
 
 Rejections carry a stable machine-readable code — `illegal_transition`,
@@ -218,8 +266,8 @@ InstallOps/
 ├── backend/
 │   ├── apps/
 │   │   ├── accounts/     custom User model and the Role enum
-│   │   ├── jobs/         Stage enum, transition graph, services, API
-│   │   └── dashboard/    aggregate query layer
+│   │   ├── jobs/         Stage enum, transition graph, services, REST API
+│   │   └── dashboard/    GraphQL schema and JWT-authenticated endpoint
 │   ├── config/           settings, URLs, health endpoint
 │   └── requirements*.txt
 ├── frontend/
@@ -239,6 +287,49 @@ client copy is a convenience and is never trusted.
 
 ---
 
+## Deployment
+
+The frontend is a static build (Vercel config in `frontend/vercel.json`); the backend is
+a standard Django service (`backend/Procfile`, release phase runs migrate and
+collectstatic); the database is PostgreSQL.
+
+Before the first deploy:
+
+1. Set `apiBaseUrl` in `frontend/src/environments/environment.ts` to the API's origin.
+   The build ships a placeholder and the app refuses to start if it is left in place.
+2. Set backend environment variables: `SECRET_KEY`, `DATABASE_URL`, `ALLOWED_HOSTS`,
+   `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` (the frontend's origin), and
+   optionally `SENTRY_DSN`. Leave `DEBUG` unset — it defaults to `False`.
+3. Run `python manage.py check --deploy` against the production settings; CI already
+   gates on this passing with no warnings.
+4. Seed demo data only if this is a demo environment: `seed_demo` refuses to run with
+   `DEBUG=False` unless `--allow-production` is passed, because it creates accounts with
+   a password published in this file.
+
+## Security model
+
+Worth stating plainly, because it is the part of this project most worth reviewing:
+
+- **The server is the only boundary.** Route guards and role-aware rendering are UX;
+  every rule they express is enforced again in the API and covered by tests that call it
+  directly with a valid token for the wrong role.
+- **Scoping is re-applied at every entry point** — the job viewset, the nested checklist
+  endpoint, the customer directory, and the GraphQL resolver each filter independently.
+- **Out-of-scope records return 404, not 403**, so a Field Tech cannot probe for the
+  existence of jobs that are not theirs.
+- **Signing out revokes the refresh token server-side** (SimpleJWT blacklist), rather
+  than only clearing browser storage.
+- **The access token is held in memory only.** The refresh token is in `localStorage`,
+  which is a deliberate trade-off: an httpOnly cookie would be stronger and would require
+  the backend to own the session.
+- **`DEBUG` defaults to `False`**, so a deployment that forgets to set it fails closed
+  rather than serving stack traces.
+- **GraphiQL and schema introspection are disabled** when `DEBUG` is off.
+- **Uploads are limited** by extension allowlist and size, and document kinds are
+  role-restricted — a Field Tech can upload a site photo, not a design package.
+- **The demo seed command refuses to run** with `DEBUG=False` unless explicitly forced,
+  because it creates accounts with a password published in this README.
+
 ## Current limitations
 
 Called out so they read as decisions rather than oversights:
@@ -247,5 +338,11 @@ Called out so they read as decisions rather than oversights:
 - No scheduling or dispatch calendar, and no route optimisation.
 - No customer-facing portal, email, or notifications.
 - Single organisation — there is no tenancy model.
-- The overview screen composes several REST calls; consolidating it behind a single
-  aggregate query is the next planned change.
+- Not deployed yet. The deployment configuration exists (`vercel.json`, `Procfile`,
+  environment-driven settings) and `check --deploy` passes, but there is no live URL.
+- Sentry is wired on both sides and activates when a DSN is set; it has not been verified
+  against a real Sentry project.
+- Concurrency: `transition_job` takes a row lock, which SQLite ignores. It is only
+  meaningful on PostgreSQL and there is no concurrent-transition test yet.
+- Accounts are created through the Django admin. The user API can change a role but
+  cannot create a user, because there is no password-setting flow.

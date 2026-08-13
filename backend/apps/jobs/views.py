@@ -6,9 +6,14 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .filters import JobFilter
-from .models import ChecklistItem, Customer, Job, StageTransition
+from .constants import STAGE_OWNER
+from .exceptions import NotStageOwner
+from .models import ChecklistItem, Customer, Job, Note, StageTransition
 from .pagination import JobPagination
 from .permissions import JobPermission
+
+#: Actions whose response is serialized with JobDetailSerializer.
+DETAIL_ACTIONS = frozenset({"retrieve", "transition", "hold", "notes", "documents"})
 from .serializers import (
     ChecklistItemSerializer,
     CustomerSerializer,
@@ -46,17 +51,24 @@ class JobViewSet(viewsets.ModelViewSet):
         A Field Tech's token cannot reach another tech's job even by guessing its id,
         because the object was never in the queryset to begin with.
         """
-        queryset = Job.objects.select_related("customer", "assigned_tech", "assigned_designer")
+        # assigned_designer is exposed as a raw id, so it needs no JOIN.
+        queryset = Job.objects.select_related("customer", "assigned_tech")
 
         user = self.request.user
+        if not user.is_authenticated:
+            # Reached only by schema generation, which introspects without a request user.
+            return queryset.none()
         if not user.sees_all_jobs:
             queryset = queryset.filter(assigned_tech=user)
 
-        if self.action == "retrieve":
+        # Every action that responds with JobDetailSerializer needs the same prefetch —
+        # not just `retrieve`. Without this, each write action re-queries the actor of
+        # every transition and the author of every note.
+        if self.action in DETAIL_ACTIONS:
             queryset = queryset.prefetch_related(
                 Prefetch("transitions", queryset=StageTransition.objects.select_related("actor")),
                 "checklist_items",
-                "notes__author",
+                Prefetch("notes", queryset=Note.objects.select_related("author")),
                 "documents",
             )
         return queryset
@@ -121,7 +133,10 @@ class JobViewSet(viewsets.ModelViewSet):
     @extend_schema(request=DocumentSerializer, responses=DocumentSerializer)
     @action(detail=True, methods=["post"])
     def documents(self, request, pk=None):
-        serializer = DocumentSerializer(data=request.data)
+        # Context matters here: DocumentSerializer.validate_kind reads the caller's role.
+        serializer = DocumentSerializer(
+            data=request.data, context=self.get_serializer_context()
+        )
         serializer.is_valid(raise_exception=True)
         document = serializer.save(job=self.get_object(), uploaded_by=request.user)
         return Response(DocumentSerializer(document).data, status=status.HTTP_201_CREATED)
@@ -136,6 +151,8 @@ class ChecklistItemViewSet(viewsets.GenericViewSet):
     def get_queryset(self) -> QuerySet[ChecklistItem]:
         queryset = ChecklistItem.objects.select_related("job")
         user = self.request.user
+        if not user.is_authenticated:
+            return queryset.none()
         if not user.sees_all_jobs:
             queryset = queryset.filter(job__assigned_tech=user)
         return queryset
@@ -143,6 +160,14 @@ class ChecklistItemViewSet(viewsets.GenericViewSet):
     @action(detail=True, methods=["post"])
     def toggle(self, request, pk=None):
         item = self.get_object()
+
+        # Checklist items for all six stages exist from the moment a job is created, so
+        # queryset scoping alone would let a Designer tick off a Coordinator's QA items.
+        if STAGE_OWNER[item.stage] != request.user.role and not request.user.is_privileged:
+            raise NotStageOwner(
+                f"{item.stage} checklist items belong to {STAGE_OWNER[item.stage]}."
+            )
+
         item.is_done = not item.is_done
         item.completed_by = request.user if item.is_done else None
         item.completed_at = timezone.now() if item.is_done else None
@@ -151,8 +176,22 @@ class ChecklistItemViewSet(viewsets.GenericViewSet):
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
-    queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
     permission_classes = (JobPermission,)
     search_fields = ("name", "email", "phone")
     ordering_fields = ("name", "created_at")
+
+    def get_queryset(self) -> QuerySet[Customer]:
+        """Scoped like jobs are.
+
+        Customers carry email, phone, and billing address. Leaving this unfiltered would
+        hand a Field Tech the company's entire customer book through the back door, even
+        though the jobs those customers belong to are correctly hidden from them.
+        """
+        queryset = Customer.objects.all()
+        user = self.request.user
+        if not user.is_authenticated:
+            return queryset.none()
+        if not user.sees_all_jobs:
+            queryset = queryset.filter(jobs__assigned_tech=user).distinct()
+        return queryset

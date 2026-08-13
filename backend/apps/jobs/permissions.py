@@ -9,7 +9,11 @@ from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 from apps.accounts.constants import Role
 
-#: action -> roles permitted to attempt it. Absent action = authenticated users only.
+#: action -> roles permitted to attempt it.
+#:
+#: Every write action is listed explicitly. An action absent from this map falls through
+#: to "any authenticated user", which is a silent way to grant access — so new write
+#: actions must be added here deliberately.
 ACTION_ROLES: dict[str, frozenset[str]] = {
     "create": frozenset({Role.COORDINATOR, Role.ADMIN}),
     "update": frozenset({Role.COORDINATOR, Role.ADMIN}),
@@ -17,6 +21,9 @@ ACTION_ROLES: dict[str, frozenset[str]] = {
     "destroy": frozenset({Role.ADMIN}),
     "hold": frozenset({Role.COORDINATOR, Role.ADMIN}),
     "dashboard": frozenset({Role.COORDINATOR, Role.ADMIN}),
+    # Anyone who can see a job may annotate it; the queryset is the real boundary.
+    "notes": frozenset({Role.COORDINATOR, Role.DESIGNER, Role.FIELD_TECH, Role.ADMIN}),
+    "documents": frozenset({Role.COORDINATOR, Role.DESIGNER, Role.FIELD_TECH, Role.ADMIN}),
 }
 
 

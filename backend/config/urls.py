@@ -11,7 +11,11 @@ Route groups:
 
 from django.contrib import admin
 from django.urls import include, path
+from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+
+from apps.dashboard.schema import schema
+from apps.dashboard.views import JWTGraphQLView
 
 from .health import health
 
@@ -26,5 +30,6 @@ urlpatterns = [
     ),
     path("api/auth/", include("apps.accounts.urls")),
     path("api/", include("apps.jobs.urls")),
-    # TODO: path("graphql/", AsyncGraphQLView.as_view(schema=schema)),
+    # Bearer-token authenticated, so CSRF does not apply.
+    path("graphql/", csrf_exempt(JWTGraphQLView.as_view(schema=schema)), name="graphql"),
 ]

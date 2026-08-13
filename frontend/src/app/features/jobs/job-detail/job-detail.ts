@@ -1,5 +1,15 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  effect,
+  inject,
+  input,
+  signal,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 
@@ -24,6 +34,7 @@ interface Banner {
 export class JobDetail {
   private readonly api = inject(JobsApi);
   private readonly auth = inject(AuthService);
+  private readonly destroyRef = inject(DestroyRef);
 
   /** Bound from the route via withComponentInputBinding(). */
   readonly id = input.required<string>();
@@ -34,7 +45,9 @@ export class JobDetail {
   protected readonly job = signal<JobDetailDto | null>(null);
   protected readonly loadError = signal('');
   protected readonly banner = signal<Banner | null>(null);
+  /** Guards the two mutations that change job state: advance and hold. */
   protected readonly pending = signal(false);
+  private readonly inFlightItems = signal<ReadonlySet<number>>(new Set());
 
   /** Set when a transition needs a reason before it can be sent. */
   protected readonly reasonFor = signal<Stage | null>(null);
@@ -64,18 +77,29 @@ export class JobDetail {
   });
 
   constructor() {
-    // input() is a signal, so this reloads if the user navigates job → job.
-    void Promise.resolve().then(() => this.load());
-  }
+    /**
+     * Reload whenever the route's id changes.
+     *
+     * The router reuses this component instance when navigating job → job, so a
+     * one-shot load in the constructor would leave job 5's data on screen under job
+     * 7's URL.
+     */
+    effect(() => {
+      const jobId = Number(this.id());
+      if (!Number.isFinite(jobId)) return;
 
-  private load(): void {
-    const jobId = Number(this.id());
-    this.api.get(jobId).subscribe({
-      next: (job) => {
-        this.job.set(job);
-        this.loadError.set('');
-      },
-      error: (error: unknown) => this.loadError.set(userMessageFrom(error)),
+      this.job.set(null);
+      this.banner.set(null);
+      this.api
+        .get(jobId)
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: (job) => {
+            this.job.set(job);
+            this.loadError.set('');
+          },
+          error: (error: unknown) => this.loadError.set(userMessageFrom(error)),
+        });
     });
   }
 
@@ -135,23 +159,26 @@ export class JobDetail {
     this.banner.set(null);
     this.job.set({ ...snapshot, stage: to, available_transitions: [] });
 
-    this.api.transition(snapshot.id, to, reason).subscribe({
-      next: (fresh) => {
-        this.job.set(fresh);
-        this.pending.set(false);
-        this.banner.set({ kind: 'ok', text: `Moved to ${STAGE_LABEL[fresh.stage]}.` });
-      },
-      error: (error: unknown) => {
-        this.job.set(snapshot);
-        this.pending.set(false);
-        this.banner.set({ kind: 'error', text: userMessageFrom(error) });
-      },
-    });
+    this.api
+      .transition(snapshot.id, to, reason)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (fresh) => {
+          this.job.set(fresh);
+          this.pending.set(false);
+          this.banner.set({ kind: 'ok', text: `Moved to ${STAGE_LABEL[fresh.stage]}.` });
+        },
+        error: (error: unknown) => {
+          this.rollbackTo(snapshot);
+          this.pending.set(false);
+          this.banner.set({ kind: 'error', text: userMessageFrom(error) });
+        },
+      });
   }
 
   protected toggleHold(): void {
     const job = this.job();
-    if (!job) return;
+    if (!job || this.pending()) return;
 
     if (!job.on_hold && !this.showHoldForm()) {
       this.showHoldForm.set(true);
@@ -162,36 +189,81 @@ export class JobDetail {
     if (!job.on_hold && !reason) return;
 
     const snapshot = job;
+    this.pending.set(true);
     this.job.set({ ...job, on_hold: !job.on_hold, hold_reason: reason });
     this.showHoldForm.set(false);
 
-    this.api.setHold(job.id, !snapshot.on_hold, reason).subscribe({
-      next: (fresh) => {
-        this.job.set(fresh);
-        this.holdReasonControl.reset('');
-      },
-      error: (error: unknown) => {
-        this.job.set(snapshot);
-        this.banner.set({ kind: 'error', text: userMessageFrom(error) });
-      },
+    this.api
+      .setHold(job.id, !snapshot.on_hold, reason)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (fresh) => {
+          this.job.set(fresh);
+          this.pending.set(false);
+          this.holdReasonControl.reset('');
+        },
+        error: (error: unknown) => {
+          this.rollbackTo(snapshot);
+          this.pending.set(false);
+          this.banner.set({ kind: 'error', text: userMessageFrom(error) });
+        },
+      });
+  }
+
+  /**
+   * Checklist toggles patch a single item rather than swapping the whole job.
+   *
+   * Restoring a whole-job snapshot here was a real bug: a checklist request that failed
+   * while a stage transition was in flight would put the job back to its pre-transition
+   * stage, silently undoing a change the server had already accepted.
+   */
+  protected toggleChecklistItem(item: ChecklistItem): void {
+    if (this.inFlightItems().has(item.id)) return;
+
+    const desired = !item.is_done;
+    this.patchChecklistItem(item.id, desired);
+    this.inFlightItems.update((ids) => new Set(ids).add(item.id));
+
+    this.api
+      .toggleChecklistItem(item.id)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (fresh) => {
+          this.patchChecklistItem(fresh.id, fresh.is_done);
+          this.clearInFlight(item.id);
+        },
+        error: (error: unknown) => {
+          this.patchChecklistItem(item.id, !desired);
+          this.clearInFlight(item.id);
+          this.banner.set({ kind: 'error', text: userMessageFrom(error) });
+        },
+      });
+  }
+
+  private patchChecklistItem(itemId: number, isDone: boolean): void {
+    const current = this.job();
+    if (!current) return;
+
+    this.job.set({
+      ...current,
+      checklist_items: current.checklist_items.map((candidate) =>
+        candidate.id === itemId ? { ...candidate, is_done: isDone } : candidate,
+      ),
     });
   }
 
-  protected toggleChecklistItem(item: ChecklistItem): void {
-    const snapshot = this.job();
-    if (!snapshot) return;
-
-    const optimistic = snapshot.checklist_items.map((candidate) =>
-      candidate.id === item.id ? { ...candidate, is_done: !candidate.is_done } : candidate,
-    );
-    this.job.set({ ...snapshot, checklist_items: optimistic });
-
-    this.api.toggleChecklistItem(item.id).subscribe({
-      error: (error: unknown) => {
-        this.job.set(snapshot);
-        this.banner.set({ kind: 'error', text: userMessageFrom(error) });
-      },
+  private clearInFlight(itemId: number): void {
+    this.inFlightItems.update((ids) => {
+      const next = new Set(ids);
+      next.delete(itemId);
+      return next;
     });
+  }
+
+  /** Restore a snapshot only if it is still the job on screen. */
+  private rollbackTo(snapshot: JobDetailDto): void {
+    const current = this.job();
+    if (current?.id === snapshot.id) this.job.set(snapshot);
   }
 
   protected addNote(): void {
@@ -200,16 +272,22 @@ export class JobDetail {
     if (!job || !body) return;
 
     this.noteControl.reset('');
-    this.api.addNote(job.id, body).subscribe({
-      next: (note) => {
-        const current = this.job();
-        if (current) this.job.set({ ...current, notes: [note, ...current.notes] });
-      },
-      error: (error: unknown) => {
-        this.noteControl.setValue(body);
-        this.banner.set({ kind: 'error', text: userMessageFrom(error) });
-      },
-    });
+    this.api
+      .addNote(job.id, body)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (note) => {
+          const current = this.job();
+          // Only append if we are still on the job the note was written against.
+          if (current?.id === job.id) {
+            this.job.set({ ...current, notes: [note, ...current.notes] });
+          }
+        },
+        error: (error: unknown) => {
+          this.noteControl.setValue(body);
+          this.banner.set({ kind: 'error', text: userMessageFrom(error) });
+        },
+      });
   }
 
   protected dismissBanner(): void {
